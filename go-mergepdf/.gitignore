@@ -1,0 +1,21 @@
+# Go workspace file
+go.work
+tmp/
+testfiles/
+output/
+uploads/
+
+# IDE specific files
+.vscode
+.idea
+
+# .env file
+.env
+
+# Project build
+main
+*templ.go
+
+# OS X generated file
+.DS_Store
+

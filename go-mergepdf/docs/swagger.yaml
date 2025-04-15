@@ -1,0 +1,157 @@
+info:
+  contact: {}
+paths:
+  /api/sessions/:
+    post:
+      description: Creates a new PDF merge session and returns a session ID
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ sessionId: string }'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Create a new session
+      tags:
+      - sessions
+  /api/sessions/{sessionID}/actions/merge:
+    post:
+      description: Merges all uploaded files in the session and returns a download
+        URL
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ downloadUrl: string }'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: No files to merge
+          schema:
+            type: string
+        "404":
+          description: Session not found
+          schema:
+            type: string
+        "409":
+          description: Merge already in progress or done
+          schema:
+            type: string
+      summary: Merge uploaded files
+      tags:
+      - files
+  /api/sessions/{sessionID}/files:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Uploads a PDF file to the session
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      - description: PDF file
+        in: formData
+        name: pdf
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ filename: string, size: int }'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "404":
+          description: Session not found
+          schema:
+            type: string
+      summary: Upload a PDF file
+      tags:
+      - files
+  /api/sessions/{sessionID}/files/{filename}:
+    get:
+      description: Downloads the merged PDF file for the session
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      - description: Merged PDF filename
+        in: path
+        name: filename
+        required: true
+        type: string
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: PDF file download
+          schema:
+            type: file
+        "403":
+          description: Unauthorized access to file
+          schema:
+            type: string
+        "404":
+          description: Session or file not found
+          schema:
+            type: string
+      summary: Download merged PDF
+      tags:
+      - files
+  /api/sessions/{sessionID}/order:
+    put:
+      consumes:
+      - application/json
+      description: Sets the order of uploaded files for merging
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      - description: '{ files: [string] }'
+        in: body
+        name: files
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ success: true }'
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "404":
+          description: Session not found
+          schema:
+            type: string
+      summary: Set file order
+      tags:
+      - files
+swagger: "2.0"
