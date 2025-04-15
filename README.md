@@ -30,6 +30,12 @@ The server will start on port 8080 by default.
 
 For API details, see [go-mergepdf/README.md](go-mergepdf/README.md)
 
+### API Documentation
+
+Interactive API documentation is available via Swagger:
+
+- [Swagger UI](http://localhost:8080/swagger/index.html)
+
 ### Frontend (Planned)
 
 The frontend will be added in the `frontend/` directory. Setup instructions will be provided once available.
