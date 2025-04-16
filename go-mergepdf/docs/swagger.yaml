@@ -154,4 +154,77 @@ paths:
       summary: Set file order
       tags:
       - files
+  /api/sessions/{sessionID}/sign:
+    post:
+      consumes:
+      - application/json
+      description: Places a previously uploaded signature image on a PDF at the exact
+        coordinates
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      - description: Sign request
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ downloadUrl: string }'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            type: string
+        "404":
+          description: Session not found
+          schema:
+            type: string
+      summary: Sign a PDF file
+      tags:
+      - signature
+  /api/sessions/{sessionID}/signature:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Uploads a signature image (PNG/JPEG) to the session
+      parameters:
+      - description: Session ID
+        in: path
+        name: sessionID
+        required: true
+        type: string
+      - description: Signature image file (PNG/JPEG)
+        in: formData
+        name: signature
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{ filename: string, size: int }'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request - invalid image format
+          schema:
+            type: string
+        "404":
+          description: Session not found
+          schema:
+            type: string
+      summary: Upload a signature image
+      tags:
+      - signature
 swagger: "2.0"
