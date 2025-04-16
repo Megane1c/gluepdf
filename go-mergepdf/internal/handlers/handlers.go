@@ -13,6 +13,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"go-mergepdf/internal/pdf"
@@ -86,21 +89,50 @@ func (h *APIHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Sanitize filename
 	sanitizeFilename := utils.SanitizeFilename(handler.Filename)
-	if filepath.Ext(handler.Filename) != ".pdf" {
+	if filepath.Ext(sanitizeFilename) != ".pdf" {
 		http.Error(w, "Only PDF files are allowed", http.StatusBadRequest)
 		return
 	}
 
-	header := make([]byte, 5)
-	if _, err := file.Read(header); err != nil {
+	// Check MIME type
+	buff := make([]byte, 512) // Read first 512 bytes
+	_, err = file.Read(buff)
+	if err != nil {
 		http.Error(w, "Failed to read file", http.StatusBadRequest)
 		return
 	}
-	if string(header) != "%PDF-" {
+
+	mimeType := http.DetectContentType(buff)
+	if mimeType != "application/pdf" {
 		http.Error(w, "Uploaded file is not a valid PDF", http.StatusBadRequest)
 		return
 	}
+
+	// Check PDF header
+	if !bytes.HasPrefix(buff, []byte("%PDF-")) {
+		_, err = file.Seek(0, io.SeekStart)
+		if err != nil {
+			http.Error(w, "Failed to process file", http.StatusInternalServerError)
+			return
+		}
+
+		// PDF spec says header should appear within the first 1024 bytes
+		largerBuff := make([]byte, 1024)
+		_, err = file.Read(largerBuff)
+		if err != nil {
+			http.Error(w, "Failed to read file", http.StatusBadRequest)
+			return
+		}
+
+		if !bytes.Contains(largerBuff, []byte("%PDF-")) {
+			http.Error(w, "Uploaded file is not a valid PDF", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Reset file pointer
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		http.Error(w, "Failed to process file", http.StatusInternalServerError)
 		return
@@ -122,7 +154,7 @@ func (h *APIHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	session.AddFile(filepath)
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"filename": "%s", "size": %d}`, filepath, handler.Size)
+	fmt.Fprintf(w, `{"filename": "%s", "size": %d}`, filename, handler.Size)
 }
 
 // UpdateOrder godoc
@@ -274,4 +306,203 @@ func (h *APIHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		session.Cleanup()
 		h.SessionManager.DeleteSession(sessionID)
 	}()
+}
+
+// SignPDF godoc
+// @Summary      Sign a PDF file
+// @Description  Places a previously uploaded signature image on a PDF at the exact coordinates
+// @Tags         signature
+// @Accept       json
+// @Produce      json
+// @Param        sessionID  path    string  true   "Session ID"
+// @Param        request    body    object  true   "Sign request"
+// @Success      200  {object}  map[string]string  "{ downloadUrl: string }"
+// @Failure      400  {string}  string  "Bad request"
+// @Failure      404  {string}  string  "Session not found"
+// @Router       /api/sessions/{sessionID}/sign [post]
+func (h *APIHandler) SignPDF(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	session, exists := h.SessionManager.GetSession(sessionID)
+	if !exists {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse JSON request
+	var req struct {
+		SourcePDF string  `json:"sourcePdf"` // Filename only
+		Signature string  `json:"signature"` // Filename only
+		Page      int     `json:"page"`
+		X         float64 `json:"x"`
+		Y         float64 `json:"y"`
+		Scale     float64 `json:"scale"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
+		return
+	}
+
+	// Basic validation
+	if req.Signature == "" || req.Page < 1 {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+	if req.Scale == 0 {
+		req.Scale = 1.0
+	}
+
+	// Get source PDF path
+	var sourcePDFPath string
+	if req.SourcePDF == "" {
+		http.Error(w, "PDF not specified", http.StatusBadRequest)
+		return
+	} else {
+		sourcePDFPath = filepath.Join(h.UploadDir, req.SourcePDF)
+
+		// Verify the file exists and belongs to this session
+		pdfExists := slices.Contains(session.GetFiles(), sourcePDFPath)
+		if !pdfExists {
+			http.Error(w, "Source PDF not found in session", http.StatusNotFound)
+			return
+		}
+	}
+
+	// Verify signature file exists
+	sigPath := filepath.Join(h.UploadDir, req.Signature)
+
+	sigExists := slices.Contains(session.GetFiles(), sigPath)
+	if !sigExists {
+		http.Error(w, "Signature file not found in session", http.StatusNotFound)
+		return
+	}
+
+	// Create output file
+	signedFilename := fmt.Sprintf("signed-%s.pdf", utils.GenerateUUID())
+	signedPath := filepath.Join(h.OutputDir, signedFilename)
+
+	// Apply signature
+	if err := pdf.SignPDF(sourcePDFPath, sigPath, req.Page, req.X, req.Y, req.Scale, signedPath); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply signature: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update session with new output file
+	session.Mutex.Lock()
+	if session.OutputFile != "" {
+		log.Printf("Removing old output file: %s", session.OutputFile)
+		os.Remove(session.OutputFile)
+	}
+	session.OutputFile = signedPath
+	session.Mutex.Unlock()
+
+	// Return download URL
+	downloadURL := fmt.Sprintf("/api/sessions/%s/files/%s", sessionID, signedFilename)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"downloadUrl": "%s"}`, downloadURL)
+}
+
+// UploadSignature godoc
+// @Summary      Upload a signature image
+// @Description  Uploads a signature image (PNG/JPEG) to the session
+// @Tags         signature
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        sessionID  path      string  true  "Session ID"
+// @Param        signature  formData  file    true  "Signature image file (PNG/JPEG)"
+// @Success      200  {object}  map[string]interface{}  "{ filename: string, size: int }"
+// @Failure      400  {string}  string  "Bad request - invalid image format"
+// @Failure      404  {string}  string  "Session not found"
+// @Router       /api/sessions/{sessionID}/signature [post]
+func (h *APIHandler) UploadSignature(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	session, exists := h.SessionManager.GetSession(sessionID)
+	if !exists {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	const maxUploadSize = 5 * 1024 * 1024 // 5MB max for signature images
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		http.Error(w, "File too large", http.StatusBadRequest)
+		return
+	}
+
+	file, handler, err := r.FormFile("signature")
+	if err != nil {
+		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Check file extension
+	ext := strings.ToLower(filepath.Ext(handler.Filename))
+	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" {
+		http.Error(w, "Only PNG and JPEG images are allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Read first few bytes to verify it's an image
+	header := make([]byte, 512)
+	if _, err := file.Read(header); err != nil {
+		http.Error(w, "Failed to read file", http.StatusBadRequest)
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		http.Error(w, "Failed to process file", http.StatusInternalServerError)
+		return
+	}
+
+	contentType := http.DetectContentType(header)
+
+	// Check that the content type is specifically PNG or JPEG/JPG
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+	}
+
+	if !allowedTypes[contentType] {
+		http.Error(w, "Invalid image format. Only PNG and JPEG images are allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Additional security check: verify extension matches detected content type
+	extForType := strings.ToLower(filepath.Ext(handler.Filename))
+	validExtensions := map[string][]string{
+		"image/jpeg": {".jpg", ".jpeg"},
+		"image/png":  {".png"},
+	}
+
+	isValidExt := false
+	if extensions, ok := validExtensions[contentType]; ok {
+		isValidExt = slices.Contains(extensions, extForType)
+	}
+
+	if !isValidExt {
+		http.Error(w, "File extension doesn't match content type", http.StatusBadRequest)
+		return
+	}
+
+	sanitizedFilename := utils.SanitizeFilename(handler.Filename)
+	filename := fmt.Sprintf("sig-%s-%s", utils.GenerateUUID(), sanitizedFilename)
+	filepath := filepath.Join(h.UploadDir, filename)
+
+	dst, err := os.Create(filepath)
+	if err != nil {
+		http.Error(w, "Failed to create file", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		http.Error(w, "Failed to save file", http.StatusInternalServerError)
+		return
+	}
+
+	// Add signature file reference to session
+	session.AddFile(filepath)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"filename": "%s", "size": %d}`, filename, handler.Size)
 }
