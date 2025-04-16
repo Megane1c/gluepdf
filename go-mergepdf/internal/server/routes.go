@@ -47,8 +47,10 @@ func (s *Server) RegisterRoutes() http.Handler {
 	r.Route("/api/sessions", func(api chi.Router) {
 		api.Post("/", h.CreateSession)
 		api.Post("/{sessionID}/files", h.UploadFile)
+		api.Post("/{sessionID}/signature", h.UploadSignature)
 		api.Put("/{sessionID}/order", h.UpdateOrder)
 		api.Post("/{sessionID}/actions/merge", h.MergeFiles)
+		api.Post("/{sessionID}/sign", h.SignPDF)
 		api.Get("/{sessionID}/files/{filename}", h.DownloadFile)
 	})
 
