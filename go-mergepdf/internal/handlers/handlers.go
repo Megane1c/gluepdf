@@ -13,6 +13,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,21 +89,50 @@ func (h *APIHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Sanitize filename
 	sanitizeFilename := utils.SanitizeFilename(handler.Filename)
-	if filepath.Ext(handler.Filename) != ".pdf" {
+	if filepath.Ext(sanitizeFilename) != ".pdf" {
 		http.Error(w, "Only PDF files are allowed", http.StatusBadRequest)
 		return
 	}
 
-	header := make([]byte, 5)
-	if _, err := file.Read(header); err != nil {
+	// Check MIME type
+	buff := make([]byte, 512) // Read first 512 bytes
+	_, err = file.Read(buff)
+	if err != nil {
 		http.Error(w, "Failed to read file", http.StatusBadRequest)
 		return
 	}
-	if string(header) != "%PDF-" {
+
+	mimeType := http.DetectContentType(buff)
+	if mimeType != "application/pdf" {
 		http.Error(w, "Uploaded file is not a valid PDF", http.StatusBadRequest)
 		return
 	}
+
+	// Check PDF header
+	if !bytes.HasPrefix(buff, []byte("%PDF-")) {
+		_, err = file.Seek(0, io.SeekStart)
+		if err != nil {
+			http.Error(w, "Failed to process file", http.StatusInternalServerError)
+			return
+		}
+
+		// PDF spec says header should appear within the first 1024 bytes
+		largerBuff := make([]byte, 1024)
+		_, err = file.Read(largerBuff)
+		if err != nil {
+			http.Error(w, "Failed to read file", http.StatusBadRequest)
+			return
+		}
+
+		if !bytes.Contains(largerBuff, []byte("%PDF-")) {
+			http.Error(w, "Uploaded file is not a valid PDF", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Reset file pointer
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		http.Error(w, "Failed to process file", http.StatusInternalServerError)
 		return
@@ -124,7 +154,7 @@ func (h *APIHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	session.AddFile(filepath)
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"filename": "%s", "size": %d}`, filepath, handler.Size)
+	fmt.Fprintf(w, `{"filename": "%s", "size": %d}`, filename, handler.Size)
 }
 
 // UpdateOrder godoc
