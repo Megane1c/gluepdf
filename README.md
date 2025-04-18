@@ -1,18 +1,33 @@
 # PDF Merge App
 
-A web application for merging PDF files. This monorepo contains the backend (Go) and will include a frontend (e.g., React, Vue) in the future.
+A web application for merging PDF files. This monorepo contains the backend (Go) and the frontend (React + Typescript).
 
 ## Project Structure
 
 ```
 go-mergepdf/      # Go backend (REST API for PDF merging)
-frontend/         # (Planned) Frontend web application
+frontend/         # Frontend web application
 ```
 
 - **go-mergepdf/**: Contains the Go backend service for uploading, merging, and downloading PDF files.  
-- **frontend/**: (To be added) Will contain the frontend client for interacting with the backend.
+- **frontend/**: Contains the frontend client for interacting with the backend.
 
 ## Getting Started
+
+### Frontend (React + Typescript)
+
+1. **Prerequisites:**  
+   - Node.js (v16+ recommended)
+   - npm
+
+2. **Setup:**  
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+
+The server will start on port 5173 by default.
 
 ### Backend (Go)
 

@@ -184,16 +184,20 @@ func (h *APIHandler) UpdateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	currentFiles := session.GetFiles()
-	fileMap := make(map[string]bool)
-	for _, file := range currentFiles {
-		fileMap[file] = true
+
+	// Add UploadDir prefix to all requested files
+	for i, filename := range fileOrder.Files {
+		fileOrder.Files[i] = filepath.Join(h.UploadDir, filename)
 	}
+
+	// Validate files against session
 	for _, file := range fileOrder.Files {
-		if !fileMap[file] {
+		if !slices.Contains(currentFiles, file) {
 			http.Error(w, "Invalid file in order list", http.StatusBadRequest)
 			return
 		}
 	}
+
 	if len(fileOrder.Files) > 0 {
 		session.SetFiles(fileOrder.Files)
 	}
